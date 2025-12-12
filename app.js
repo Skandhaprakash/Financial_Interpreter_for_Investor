@@ -1,35 +1,49 @@
-// app.js
+// app.js - Fixed version using correct FMP API endpoints
 
-// IMPORTANT: this key is in client-side code, so treat this deployment as experimental.
-// For production, route calls through a backend.
 const API_KEY = "MQ2qInX7K7T26UMDJA2R9Q43zHccjTDn";
 
 async function fetchJSON(url) {
-  const res = await fetch(url);
-  console.log("Request URL:", url, "Status:", res.status); // helps debug in browser console
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  return res.json();
+  try {
+    const res = await fetch(url);
+    console.log("Request URL:", url, "Status:", res.status);
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error("Error response:", errorText);
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    return res.json();
+  } catch (e) {
+    console.error("Fetch error:", e);
+    throw e;
+  }
 }
 
 async function getFinancials(symbol) {
-  const base = "https://financialmodelingprep.com/api/v3";
-  // 5 last annual statements as per FMP docs. [web:40][web:43]
+  const base = "https://financialmodelingprep.com/stable";
+  // Correct endpoints using /stable/ path, period=FY for annual data, limit=5 for 5 years
   const [is, bs, cf] = await Promise.all([
     fetchJSON(
-      `${base}/income-statement/${symbol}?period=annual&limit=5&apikey=${API_KEY}`
+      `${base}/income-statement/${symbol}?period=FY&limit=5&apikey=${API_KEY}`
     ),
     fetchJSON(
-      `${base}/balance-sheet-statement/${symbol}?period=annual&limit=5&apikey=${API_KEY}`
+      `${base}/balance-sheet-statement/${symbol}?period=FY&limit=5&apikey=${API_KEY}`
     ),
     fetchJSON(
-      `${base}/cash-flow-statement/${symbol}?period=annual&limit=5&apikey=${API_KEY}`
+      `${base}/cash-flow-statement/${symbol}?period=FY&limit=5&apikey=${API_KEY}`
     )
   ]);
+  
+  // Check if response is an array (success) or error object
+  if (!Array.isArray(is) || !Array.isArray(bs) || !Array.isArray(cf)) {
+    throw new Error("Invalid API response - expected arrays");
+  }
+  
   return { income: is, balance: bs, cashflow: cf };
 }
 
 function toYearsOrdered(data) {
-  // FMP returns most recent first → reverse to chronological order. [web:43]
+  // FMP returns most recent first; reverse for chronological order
+  if (!Array.isArray(data)) return [];
   return data.slice().reverse();
 }
 
@@ -38,11 +52,16 @@ function computeRatios(fin) {
   const balance = toYearsOrdered(fin.balance);
   const cashflow = toYearsOrdered(fin.cashflow);
 
-  const years = income.map(r => r.calendarYear || r.date?.slice(0, 4));
+  if (income.length === 0) {
+    throw new Error("No income statement data received");
+  }
+
+  const years = income.map(r => r.calendarYear || (r.date ? r.date.slice(0, 4) : "N/A"));
   const ratios = years.map((y, i) => {
-    const is = income[i];
+    const is = income[i] || {};
     const bs = balance[i] || {};
     const cf = cashflow[i] || {};
+
     const revenue = is.revenue || 0;
     const netIncome = is.netIncome || 0;
     const totalAssets = bs.totalAssets || 0;
@@ -53,10 +72,8 @@ function computeRatios(fin) {
     const inventory = bs.inventory || 0;
     const receivables = bs.netReceivables || bs.accountsReceivable || 0;
     const payables = bs.accountPayables || 0;
-    const cash =
-      bs.cashAndCashEquivalents || bs.cashAndShortTermInvestments || 0;
-    const opCF =
-      cf.netCashProvidedByOperatingActivities || cf.operatingCashFlow || 0;
+    const cash = bs.cashAndCashEquivalents || 0;
+    const opCF = cf.netCashProvidedByOperatingActivities || cf.operatingCashFlow || 0;
 
     return {
       year: y,
@@ -72,7 +89,9 @@ function computeRatios(fin) {
       dpo: revenue ? (payables / revenue) * 365 : null,
       opCF,
       cash,
-      totalEquity
+      totalEquity,
+      totalAssets,
+      totalLiabilities
     };
   });
   return ratios;
@@ -184,6 +203,8 @@ function renderRatiosTable(ratios, flags) {
       ${row("Operating CF", "opCF")}
       ${row("Cash", "cash")}
       ${row("Total equity", "totalEquity")}
+      ${row("Total assets", "totalAssets")}
+      ${row("Total liabilities", "totalLiabilities")}
     </table>
   `;
   document.getElementById("ratiosTable").innerHTML = html;
@@ -212,17 +233,20 @@ function renderCharts(ratios) {
           label: "Revenue",
           data: rev,
           borderColor: "#00bcd4",
-          backgroundColor: "transparent"
+          backgroundColor: "transparent",
+          tension: 0.3
         },
         {
           label: "Net Income",
           data: ni,
           borderColor: "#8bc34a",
-          backgroundColor: "transparent"
+          backgroundColor: "transparent",
+          tension: 0.3
         }
       ]
     },
     options: {
+      responsive: true,
       plugins: { legend: { labels: { color: "#f2f2f2" } } },
       scales: {
         x: { ticks: { color: "#f2f2f2" } },
@@ -240,17 +264,20 @@ function renderCharts(ratios) {
           label: "Cash",
           data: cash,
           borderColor: "#ffca28",
-          backgroundColor: "transparent"
+          backgroundColor: "transparent",
+          tension: 0.3
         },
         {
           label: "Operating CF",
           data: opCF,
           borderColor: "#ff7043",
-          backgroundColor: "transparent"
+          backgroundColor: "transparent",
+          tension: 0.3
         }
       ]
     },
     options: {
+      responsive: true,
       plugins: { legend: { labels: { color: "#f2f2f2" } } },
       scales: {
         x: { ticks: { color: "#f2f2f2" } },
@@ -299,44 +326,5 @@ function renderInterpretation(ratios, flags, symbol) {
     lastNiGr
   )}, operating cash flow growth ${pct(
     lastOpGr
-  )}. Divergence between revenue and cash flow growth highlights potential earnings‑quality issues.</div>`;
-  html += `<div class="interpretation"><strong>Quality & leverage:</strong> Net margin in the latest year is ${pct(
-    latest.margin
-  )} with ROA ${pct(
-    latest.roa
-  )}; debt‑to‑equity is ${
-    latest.debtToEquity?.toFixed(2) ?? "n/a"
-  }, which you can compare with sector medians when extending the app.</div>`;
-  if (latestFlags.length) {
-    html += `<div class="interpretation"><strong>Key concerns in latest year for ${symbol.toUpperCase()}:</strong> ${latestFlags.join(
-      "; "
-    )}. These patterns warrant deeper note‑level review before an investment decision.</div>`;
-  } else {
-    html += `<div class="interpretation"><strong>Key concerns in latest year for ${symbol.toUpperCase()}:</strong> No rule‑based anomalies flagged, but investors should still review footnotes, competitive dynamics, and valuation before investing.</div>`;
-  }
-
-  document.getElementById("interpretationBlock").innerHTML = html;
-}
-
-async function runAnalysis() {
-  const symbol = document.getElementById("symbolInput").value.trim();
-  if (!symbol) {
-    alert("Enter a symbol.");
-    return;
-  }
-  document.getElementById("status").textContent = "Loading 5‑year financials...";
-  try {
-    const fin = await getFinancials(symbol);
-    const ratios = computeRatios(fin);
-    const flags = detectAnomalies(ratios);
-    renderRatiosTable(ratios, flags);
-    renderCharts(ratios);
-    renderAnomalySummary(ratios, flags);
-    renderInterpretation(ratios, flags, symbol);
-    document.getElementById("status").textContent = "";
-  } catch (e) {
-    console.error(e);
-    document.getElementById("status").textContent =
-      "Error fetching data. Check symbol or API key.";
-  }
-}
+  )}. Divergence between revenue and cash flow growth highlights potential earnings quality issues.</div>`;
+  html += `<div class="interpretation"><strong>Quality & leverage:</strong> Net margin in the latest year is ${
