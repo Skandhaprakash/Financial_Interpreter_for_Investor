@@ -1,0 +1,103 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+  background: #0b1020;
+  color: #f2f2f2;
+}
+
+h1 {
+  margin-bottom: 10px;
+}
+
+.controls {
+  margin-bottom: 20px;
+}
+
+input,
+button {
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+button {
+  cursor: pointer;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+.card {
+  background: #151a30;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+th,
+td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #333;
+  text-align: right;
+}
+
+th {
+  background: #1e2746;
+  text-align: center;
+}
+
+td:first-child,
+th:first-child {
+  text-align: left;
+}
+
+.anomaly-pos {
+  color: #00ff99;
+  font-weight: 600;
+}
+
+.anomaly-neg {
+  color: #ff4d4f;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+.badge-red {
+  background: #ff4d4f33;
+  color: #ff4d4f;
+}
+
+.badge-green {
+  background: #00ff9933;
+  color: #00ff99;
+}
+
+.interpretation {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.loading {
+  font-size: 13px;
+  color: #aaa;
+}
+
+canvas {
+  background: #0b1020;
+}

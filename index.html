@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>5‑Year Financial Anomaly Detector</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>5‑Year Financial Anomaly Detector</h1>
+  <div class="controls">
+    <input id="symbolInput" placeholder="Enter ticker symbol, e.g., AAPL" />
+    <button onclick="runAnalysis()">Analyze</button>
+    <span id="status" class="loading"></span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Key Ratios (5Y)</h3>
+      <div id="ratiosTable"></div>
+    </div>
+    <div class="card">
+      <h3>Anomaly Summary</h3>
+      <div id="anomalySummary"></div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:20px;">
+    <div class="card">
+      <h3>Revenue & Net Income Trend</h3>
+      <canvas id="revNiChart" height="150"></canvas>
+    </div>
+    <div class="card">
+      <h3>Cash vs Operating CF</h3>
+      <canvas id="cashNiChart" height="150"></canvas>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:20px;">
+    <h3>Decision Support Interpretation</h3>
+    <div id="interpretationBlock"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
