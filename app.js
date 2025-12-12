@@ -1,4 +1,4 @@
-// app.js - Fixed version using correct FMP API endpoints
+// app.js - CORRECTED VERSION with proper FMP API endpoints
 
 const API_KEY = "MQ2qInX7K7T26UMDJA2R9Q43zHccjTDn";
 
@@ -7,11 +7,12 @@ async function fetchJSON(url) {
     const res = await fetch(url);
     console.log("Request URL:", url, "Status:", res.status);
     if (!res.ok) {
-      const errorText = await res.text();
-      console.error("Error response:", errorText);
-      throw new Error(`HTTP ${res.status}: ${errorText}`);
+      const text = await res.text();
+      console.error("Error response:", text);
+      throw new Error(`HTTP ${res.status}`);
     }
-    return res.json();
+    const data = await res.json();
+    return data;
   } catch (e) {
     console.error("Fetch error:", e);
     throw e;
@@ -20,30 +21,33 @@ async function fetchJSON(url) {
 
 async function getFinancials(symbol) {
   const base = "https://financialmodelingprep.com/stable";
-  // Correct endpoints using /stable/ path, period=FY for annual data, limit=5 for 5 years
-  const [is, bs, cf] = await Promise.all([
-    fetchJSON(
+  
+  try {
+    // Correct endpoints using /stable/ and period=FY for annual data
+    const isData = await fetchJSON(
       `${base}/income-statement/${symbol}?period=FY&limit=5&apikey=${API_KEY}`
-    ),
-    fetchJSON(
+    );
+    const bsData = await fetchJSON(
       `${base}/balance-sheet-statement/${symbol}?period=FY&limit=5&apikey=${API_KEY}`
-    ),
-    fetchJSON(
+    );
+    const cfData = await fetchJSON(
       `${base}/cash-flow-statement/${symbol}?period=FY&limit=5&apikey=${API_KEY}`
-    )
-  ]);
-  
-  // Check if response is an array (success) or error object
-  if (!Array.isArray(is) || !Array.isArray(bs) || !Array.isArray(cf)) {
-    throw new Error("Invalid API response - expected arrays");
+    );
+    
+    // Validate responses
+    if (!Array.isArray(isData) || !Array.isArray(bsData) || !Array.isArray(cfData)) {
+      throw new Error("Invalid API responses - expected arrays");
+    }
+    
+    return { income: isData, balance: bsData, cashflow: cfData };
+  } catch (e) {
+    console.error("getFinancials error:", e);
+    throw e;
   }
-  
-  return { income: is, balance: bs, cashflow: cf };
 }
 
 function toYearsOrdered(data) {
-  // FMP returns most recent first; reverse for chronological order
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data) || data.length === 0) return [];
   return data.slice().reverse();
 }
 
@@ -53,10 +57,13 @@ function computeRatios(fin) {
   const cashflow = toYearsOrdered(fin.cashflow);
 
   if (income.length === 0) {
-    throw new Error("No income statement data received");
+    throw new Error("No financial data received from API");
   }
 
-  const years = income.map(r => r.calendarYear || (r.date ? r.date.slice(0, 4) : "N/A"));
+  const years = income.map((r, idx) => {
+    return r.calendarYear || (r.date ? r.date.slice(0, 4) : `Year${idx}`);
+  });
+
   const ratios = years.map((y, i) => {
     const is = income[i] || {};
     const bs = balance[i] || {};
@@ -64,63 +71,78 @@ function computeRatios(fin) {
 
     const revenue = is.revenue || 0;
     const netIncome = is.netIncome || 0;
+    const grossProfit = is.grossProfit || 0;
+    const operatingIncome = is.operatingIncome || 0;
+
     const totalAssets = bs.totalAssets || 0;
     const totalLiabilities = bs.totalLiabilities || 0;
     const totalEquity = bs.totalStockholdersEquity || bs.totalEquity || 0;
     const currentAssets = bs.totalCurrentAssets || 0;
     const currentLiabilities = bs.totalCurrentLiabilities || 0;
     const inventory = bs.inventory || 0;
-    const receivables = bs.netReceivables || bs.accountsReceivable || 0;
-    const payables = bs.accountPayables || 0;
+    const netReceivables = bs.netReceivables || 0;
+    const accountsReceivable = bs.accountsReceivable || 0;
+    const accountPayables = bs.accountPayables || 0;
     const cash = bs.cashAndCashEquivalents || 0;
-    const opCF = cf.netCashProvidedByOperatingActivities || cf.operatingCashFlow || 0;
+
+    const operatingCashFlow = cf.netCashProvidedByOperatingActivities || cf.operatingCashFlow || 0;
+
+    const receivables = netReceivables || accountsReceivable || 0;
+    const payables = accountPayables || 0;
 
     return {
       year: y,
       revenue,
       netIncome,
-      margin: revenue ? netIncome / revenue : null,
-      roa: totalAssets ? netIncome / totalAssets : null,
+      grossProfit,
+      operatingIncome,
+      margin: revenue ? (netIncome / revenue) * 100 : null,
+      grossMargin: revenue ? (grossProfit / revenue) * 100 : null,
+      operatingMargin: revenue ? (operatingIncome / revenue) * 100 : null,
+      roa: totalAssets ? (netIncome / totalAssets) * 100 : null,
       debtToEquity: totalEquity ? totalLiabilities / totalEquity : null,
       currentRatio: currentLiabilities ? currentAssets / currentLiabilities : null,
+      quickRatio: currentLiabilities ? (currentAssets - inventory) / currentLiabilities : null,
       cashToDebt: totalLiabilities ? cash / totalLiabilities : null,
       dso: revenue ? (receivables / revenue) * 365 : null,
       dio: revenue ? (inventory / revenue) * 365 : null,
       dpo: revenue ? (payables / revenue) * 365 : null,
-      opCF,
+      operatingCashFlow,
       cash,
       totalEquity,
       totalAssets,
       totalLiabilities
     };
   });
+
   return ratios;
 }
 
 function computeGrowth(series) {
   return series.map((v, i) => {
-    if (i === 0 || v == null || series[i - 1] == null || series[i - 1] === 0)
+    if (i === 0 || v == null || series[i - 1] == null || series[i - 1] === 0) {
       return null;
-    return (v - series[i - 1]) / Math.abs(series[i - 1]);
+    }
+    return ((v - series[i - 1]) / Math.abs(series[i - 1])) * 100;
   });
 }
 
 function zScores(arr) {
-  const vals = arr.filter(v => v != null);
+  const vals = arr.filter(v => v != null && !isNaN(v));
   const n = vals.length;
   if (n < 2) return arr.map(() => null);
+  
   const mean = vals.reduce((a, b) => a + b, 0) / n;
-  const sd =
-    Math.sqrt(
-      vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (n - 1)
-    ) || 0.000001;
-  return arr.map(v => (v == null ? null : (v - mean) / sd));
+  const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (n - 1);
+  const sd = Math.sqrt(variance) || 0.000001;
+  
+  return arr.map(v => (v == null || isNaN(v) ? null : (v - mean) / sd));
 }
 
 function detectAnomalies(ratios) {
   const margin = ratios.map(r => r.margin);
   const debtEq = ratios.map(r => r.debtToEquity);
-  const opCF = ratios.map(r => r.opCF);
+  const opCF = ratios.map(r => r.operatingCashFlow);
   const netIncome = ratios.map(r => r.netIncome);
   const equity = ratios.map(r => r.totalEquity);
   const cash = ratios.map(r => r.cash);
@@ -131,24 +153,27 @@ function detectAnomalies(ratios) {
   const flags = [];
   ratios.forEach((r, i) => {
     const yearFlags = [];
+    
     if (marginZ[i] != null && marginZ[i] < -1.5) {
-      yearFlags.push("Sharp margin deterioration vs 5Y mean");
+      yearFlags.push("⚠ Sharp margin deterioration vs 5Y mean");
     }
+    
     if (debtEqZ[i] != null && debtEqZ[i] > 1.5) {
-      yearFlags.push("Leverage spike vs 5Y mean");
+      yearFlags.push("⚠ Leverage spike vs 5Y mean");
     }
+    
     if (netIncome[i] < 0 && opCF[i] < 0) {
-      yearFlags.push("Both net income and operating cash flow negative");
+      yearFlags.push("⚠ Both net income and operating cash flow negative");
     }
+    
     if (equity[i] != null && cash[i] != null) {
       const eqGr = i > 0 && equity[i - 1] ? equity[i] - equity[i - 1] : null;
       const cashGr = i > 0 && cash[i - 1] ? cash[i] - cash[i - 1] : null;
-      if (eqGr < 0 && cashGr < 0) {
-        yearFlags.push(
-          "Equity and cash declining together (value erosion + cash burn)"
-        );
+      if (eqGr != null && cashGr != null && eqGr < 0 && cashGr < 0) {
+        yearFlags.push("⚠ Equity and cash declining together (value erosion + cash burn)");
       }
     }
+    
     flags.push(yearFlags);
   });
 
@@ -156,70 +181,84 @@ function detectAnomalies(ratios) {
 }
 
 function renderRatiosTable(ratios, flags) {
-  if (!ratios.length) {
+  if (!ratios || ratios.length === 0) {
     document.getElementById("ratiosTable").innerHTML = "<span>No data.</span>";
     return;
   }
+  
   const headerYears = ratios.map(r => `<th>${r.year}</th>`).join("");
+  
   function row(label, key, fmtPct = false) {
     const cells = ratios
       .map((r, i) => {
         let v = r[key];
-        if (v == null) return "<td>-</td>";
-        const formatted = fmtPct
-          ? (v * 100).toFixed(1) + "%"
-          : Math.abs(v) > 1e9
-          ? (v / 1e9).toFixed(2) + "B"
-          : Math.abs(v) > 1e6
-          ? (v / 1e6).toFixed(2) + "M"
-          : v.toFixed(2);
+        if (v == null || isNaN(v)) return "<td>-</td>";
+        
+        let formatted;
+        if (fmtPct) {
+          formatted = parseFloat(v).toFixed(2) + "%";
+        } else {
+          const abs = Math.abs(v);
+          if (abs > 1e9) {
+            formatted = (v / 1e9).toFixed(2) + "B";
+          } else if (abs > 1e6) {
+            formatted = (v / 1e6).toFixed(2) + "M";
+          } else if (abs > 1e3) {
+            formatted = (v / 1e3).toFixed(2) + "K";
+          } else {
+            formatted = v.toFixed(2);
+          }
+        }
+        
         const f = flags[i] || [];
-        const hasNeg = f.some(
-          s =>
-            s.toLowerCase().includes("negative") ||
-            s.toLowerCase().includes("deterioration") ||
-            s.toLowerCase().includes("declin")
-        );
+        const hasNeg = f.some(s => s.includes("deterioration") || s.includes("declining"));
         const cls = hasNeg ? "anomaly-neg" : "";
         return `<td class="${cls}">${formatted}</td>`;
       })
       .join("");
-    return `<tr><td>${label}</td>${cells}</tr>`;
+    
+    return `<tr><td><strong>${label}</strong></td>${cells}</tr>`;
   }
 
   const html = `
     <table>
       <tr><th>Metric</th>${headerYears}</tr>
-      ${row("Revenue", "revenue")}
-      ${row("Net income", "netIncome")}
-      ${row("Net margin", "margin", true)}
-      ${row("ROA", "roa", true)}
+      ${row("Revenue ($)", "revenue")}
+      ${row("Net Income ($)", "netIncome")}
+      ${row("Gross Profit ($)", "grossProfit")}
+      ${row("Net Margin (%)", "margin", true)}
+      ${row("Gross Margin (%)", "grossMargin", true)}
+      ${row("Operating Margin (%)", "operatingMargin", true)}
+      ${row("ROA (%)", "roa", true)}
       ${row("Debt / Equity", "debtToEquity")}
-      ${row("Current ratio", "currentRatio")}
+      ${row("Current Ratio", "currentRatio")}
+      ${row("Quick Ratio", "quickRatio")}
       ${row("Cash / Debt", "cashToDebt")}
       ${row("DSO (days)", "dso")}
       ${row("DIO (days)", "dio")}
       ${row("DPO (days)", "dpo")}
-      ${row("Operating CF", "opCF")}
-      ${row("Cash", "cash")}
-      ${row("Total equity", "totalEquity")}
-      ${row("Total assets", "totalAssets")}
-      ${row("Total liabilities", "totalLiabilities")}
+      ${row("Operating CF ($)", "operatingCashFlow")}
+      ${row("Cash ($)", "cash")}
+      ${row("Total Equity ($)", "totalEquity")}
     </table>
   `;
+  
   document.getElementById("ratiosTable").innerHTML = html;
 }
 
 let revNiChart, cashNiChart;
 
 function renderCharts(ratios) {
+  if (!ratios || ratios.length === 0) return;
+  
   const ctx1 = document.getElementById("revNiChart").getContext("2d");
   const ctx2 = document.getElementById("cashNiChart").getContext("2d");
+  
   const labels = ratios.map(r => r.year);
-  const rev = ratios.map(r => r.revenue);
-  const ni = ratios.map(r => r.netIncome);
-  const cash = ratios.map(r => r.cash);
-  const opCF = ratios.map(r => r.opCF);
+  const rev = ratios.map(r => r.revenue / 1e9);
+  const ni = ratios.map(r => r.netIncome / 1e9);
+  const cash = ratios.map(r => r.cash / 1e9);
+  const opCF = ratios.map(r => r.operatingCashFlow / 1e9);
 
   if (revNiChart) revNiChart.destroy();
   if (cashNiChart) cashNiChart.destroy();
@@ -230,27 +269,33 @@ function renderCharts(ratios) {
       labels,
       datasets: [
         {
-          label: "Revenue",
+          label: "Revenue ($B)",
           data: rev,
           borderColor: "#00bcd4",
           backgroundColor: "transparent",
-          tension: 0.3
+          tension: 0.3,
+          fill: false
         },
         {
-          label: "Net Income",
+          label: "Net Income ($B)",
           data: ni,
           borderColor: "#8bc34a",
           backgroundColor: "transparent",
-          tension: 0.3
+          tension: 0.3,
+          fill: false
         }
       ]
     },
     options: {
       responsive: true,
-      plugins: { legend: { labels: { color: "#f2f2f2" } } },
+      maintainAspectRatio: true,
+      plugins: { 
+        legend: { labels: { color: "#f2f2f2" } },
+        title: { display: false }
+      },
       scales: {
-        x: { ticks: { color: "#f2f2f2" } },
-        y: { ticks: { color: "#f2f2f2" } }
+        x: { ticks: { color: "#f2f2f2" }, grid: { color: "#333" } },
+        y: { ticks: { color: "#f2f2f2" }, grid: { color: "#333" } }
       }
     }
   });
@@ -261,27 +306,33 @@ function renderCharts(ratios) {
       labels,
       datasets: [
         {
-          label: "Cash",
+          label: "Cash ($B)",
           data: cash,
           borderColor: "#ffca28",
           backgroundColor: "transparent",
-          tension: 0.3
+          tension: 0.3,
+          fill: false
         },
         {
-          label: "Operating CF",
+          label: "Operating CF ($B)",
           data: opCF,
           borderColor: "#ff7043",
           backgroundColor: "transparent",
-          tension: 0.3
+          tension: 0.3,
+          fill: false
         }
       ]
     },
     options: {
       responsive: true,
-      plugins: { legend: { labels: { color: "#f2f2f2" } } },
+      maintainAspectRatio: true,
+      plugins: { 
+        legend: { labels: { color: "#f2f2f2" } },
+        title: { display: false }
+      },
       scales: {
-        x: { ticks: { color: "#f2f2f2" } },
-        y: { ticks: { color: "#f2f2f2" } }
+        x: { ticks: { color: "#f2f2f2" }, grid: { color: "#333" } },
+        y: { ticks: { color: "#f2f2f2" }, grid: { color: "#333" } }
       }
     }
   });
@@ -290,41 +341,6 @@ function renderCharts(ratios) {
 function renderAnomalySummary(ratios, flags) {
   const container = document.getElementById("anomalySummary");
   let html = "";
+  
   flags.forEach((f, i) => {
-    if (!f.length) return;
-    html += `<div class="interpretation"><strong>${ratios[i].year}:</strong> `;
-    html += f
-      .map(s => `<span class="badge badge-red">⚠ ${s}</span>`)
-      .join(" ");
-    html += "</div>";
-  });
-  if (!html)
-    html =
-      "<span>No major statistical anomalies detected over the last 5 years (given current rules).</span>";
-  container.innerHTML = html;
-}
-
-function renderInterpretation(ratios, flags, symbol) {
-  const latest = ratios[ratios.length - 1];
-  const latestFlags = flags[flags.length - 1] || [];
-  const gRev = computeGrowth(ratios.map(r => r.revenue));
-  const gNi = computeGrowth(ratios.map(r => r.netIncome));
-  const gOp = computeGrowth(ratios.map(r => r.opCF));
-
-  const lastRevGr = gRev[gRev.length - 1];
-  const lastNiGr = gNi[gNi.length - 1];
-  const lastOpGr = gOp[gOp.length - 1];
-
-  function pct(v) {
-    return v == null ? "n/a" : (v * 100).toFixed(1) + "%";
-  }
-
-  let html = "";
-  html += `<div class="interpretation"><strong>Growth profile:</strong> Latest year revenue growth ${pct(
-    lastRevGr
-  )}, net income growth ${pct(
-    lastNiGr
-  )}, operating cash flow growth ${pct(
-    lastOpGr
-  )}. Divergence between revenue and cash flow growth highlights potential earnings quality issues.</div>`;
-  html += `<div class="interpretation"><strong>Quality & leverage:</strong> Net margin in the latest year is ${
+    if (!f || f
