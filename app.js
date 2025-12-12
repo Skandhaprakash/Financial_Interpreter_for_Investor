@@ -1,24 +1,35 @@
-const API_KEY = "MQ2qInX7K7T26UMDJA2R9Q43zHccjTDn"; // keep secret in real app
+// app.js
+
+// IMPORTANT: this key is in client-side code, so treat this deployment as experimental.
+// For production, route calls through a backend.
+const API_KEY = "MQ2qInX7K7T26UMDJA2R9Q43zHccjTDn";
 
 async function fetchJSON(url) {
   const res = await fetch(url);
+  console.log("Request URL:", url, "Status:", res.status); // helps debug in browser console
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
 
 async function getFinancials(symbol) {
   const base = "https://financialmodelingprep.com/api/v3";
-  // FMP docs: /income-statement, /balance-sheet-statement, /cash-flow-statement with limit & apikey. [web:39][web:43]
+  // 5 last annual statements as per FMP docs. [web:40][web:43]
   const [is, bs, cf] = await Promise.all([
-    fetchJSON(`${base}/income-statement/${symbol}?limit=5&apikey=${API_KEY}`),
-    fetchJSON(`${base}/balance-sheet-statement/${symbol}?limit=5&apikey=${API_KEY}`),
-    fetchJSON(`${base}/cash-flow-statement/${symbol}?limit=5&apikey=${API_KEY}`)
+    fetchJSON(
+      `${base}/income-statement/${symbol}?period=annual&limit=5&apikey=${API_KEY}`
+    ),
+    fetchJSON(
+      `${base}/balance-sheet-statement/${symbol}?period=annual&limit=5&apikey=${API_KEY}`
+    ),
+    fetchJSON(
+      `${base}/cash-flow-statement/${symbol}?period=annual&limit=5&apikey=${API_KEY}`
+    )
   ]);
   return { income: is, balance: bs, cashflow: cf };
 }
 
 function toYearsOrdered(data) {
-  // FMP returns most recent first → reverse to chronological. [web:43]
+  // FMP returns most recent first → reverse to chronological order. [web:43]
   return data.slice().reverse();
 }
 
